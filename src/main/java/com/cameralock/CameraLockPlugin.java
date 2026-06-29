@@ -74,9 +74,10 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 	@Inject
 	private CameraLockOverlay overlay;
 
-	private CameraLockPanel panel;
+	@Inject
+	private Gson gson;
 
-	private final Gson gson = new Gson();
+	private CameraLockPanel panel;
 
 	@Getter
 	private boolean locked = false;
