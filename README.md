@@ -1,6 +1,6 @@
 # Camera Locks
 
-A RuneLite plugin that locks your camera in place and lets you save and restore named camera position presets.
+Lock your camera in place and save and restore named camera position presets.
 
 ## Features
 
@@ -12,10 +12,10 @@ Lock the camera to prevent it from being moved by:
 
 Toggle the lock with a configurable hotkey, or use the **Lock Camera** button in the side panel. A **CAMERA LOCKED** overlay is shown on screen while the lock is active (can be disabled in settings).
 
+This also works if you have right click drag enabled in the Runelite camera plugin, as that just remaps to middle mouse drag.
+
 ### Camera Position Presets
 Save your current camera angle (yaw, pitch, and zoom) as a named preset. Clicking **LOCK** on a saved preset instantly moves the camera to that position and locks it in place.
-
-Presets are persisted across sessions.
 
 ## Side Panel
 
@@ -25,7 +25,7 @@ The side panel shows:
 - A field to save the current camera position as a named preset
 - Your list of saved positions, each with a **LOCK** button (apply + lock) and a **✕** delete button
 
-The active preset's row is highlighted in green.
+The active preset is highlighted in green.
 
 ## Configuration
 
