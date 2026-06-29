@@ -18,10 +18,10 @@ import javax.swing.SwingUtilities;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
-import net.runelite.api.ScriptID;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.gameval.VarClientID;
-import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.KeyListener;
 import net.runelite.client.input.KeyManager;
 import net.runelite.client.input.MouseListener;
@@ -37,11 +37,15 @@ import net.runelite.client.util.HotkeyListener;
 @Slf4j
 @PluginDescriptor(
 	name = "Camera Locks",
-	description = "Lock the camera and save/restore camera position presets",
+	description = "Lock the camera and save/restore named camera position presets",
 	tags = {"camera", "lock", "zoom", "pan", "preset"}
 )
 public class CameraLockPlugin extends Plugin implements KeyListener, MouseListener, MouseWheelListener
 {
+	static final int YAW_TOLERANCE = 15;
+	static final int PITCH_TOLERANCE = 8;
+	static final int ZOOM_TOLERANCE = 50;
+
 	private static final String CONFIG_GROUP = "cameralock";
 	private static final String PRESETS_KEY = "presets";
 	private static final Type PRESET_LIST_TYPE = new TypeToken<List<CameraPreset>>(){}.getType();
@@ -51,9 +55,6 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 
 	@Inject
 	private Client client;
-
-	@Inject
-	private ClientThread clientThread;
 
 	@Inject
 	private KeyManager keyManager;
@@ -71,15 +72,19 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 	private ConfigManager configManager;
 
 	@Inject
-	private CameraLockOverlay overlay;
+	private Gson gson;
 
 	@Inject
-	private Gson gson;
+	private CameraLockOverlay overlay;
 
 	private CameraLockPanel panel;
 
 	@Getter
 	private boolean locked = false;
+
+	@Getter
+	private CameraPreset guidancePreset = null;
+	private int guidancePresetIndex = -1;
 
 	private int activePresetIndex = -1;
 	private boolean middleMouseDown = false;
@@ -104,6 +109,8 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 	protected void startUp()
 	{
 		locked = false;
+		guidancePreset = null;
+		guidancePresetIndex = -1;
 		activePresetIndex = -1;
 		middleMouseDown = false;
 
@@ -116,7 +123,6 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 			.panel(panel)
 			.build();
 		clientToolbar.addNavigation(navButton);
-
 		panel.refreshPresets(loadPresets());
 
 		keyManager.registerKeyListener(toggleHotkeyListener);
@@ -130,8 +136,11 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 	protected void shutDown()
 	{
 		locked = false;
+		guidancePreset = null;
+		guidancePresetIndex = -1;
 		activePresetIndex = -1;
 		middleMouseDown = false;
+		client.setCameraSpeed(1f);
 
 		clientToolbar.removeNavigation(navButton);
 		navButton = null;
@@ -144,8 +153,56 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 		overlayManager.remove(overlay);
 	}
 
+	@Subscribe
+	public void onGameTick(GameTick event)
+	{
+		if (guidancePreset == null)
+		{
+			return;
+		}
+
+		int yaw = client.getCameraYaw();
+		int pitch = client.getCameraPitch();
+		int zoom = client.getVarcIntValue(VarClientID.CAMERA_ZOOM_BIG);
+
+		boolean yawOk = Math.abs(yawDiff(guidancePreset.getYaw(), yaw)) <= YAW_TOLERANCE;
+		boolean pitchOk = Math.abs(guidancePreset.getPitch() - pitch) <= PITCH_TOLERANCE;
+		boolean zoomOk = Math.abs(guidancePreset.getZoom() - zoom) <= ZOOM_TOLERANCE;
+
+		if (yawOk && pitchOk && zoomOk)
+		{
+			guidancePreset = null;
+			activePresetIndex = guidancePresetIndex;
+			guidancePresetIndex = -1;
+			locked = true;
+			client.setCameraSpeed(1f);
+			panel.setLocked(true);
+			panel.setActivePreset(activePresetIndex);
+		}
+	}
+
+	/** Signed circular difference: positive = target is clockwise from current. */
+	static int yawDiff(int target, int current)
+	{
+		int diff = target - current;
+		if (diff > 1024) diff -= 2048;
+		if (diff < -1024) diff += 2048;
+		return diff;
+	}
+
 	void toggleLock()
 	{
+		if (guidancePreset != null)
+		{
+			// Cancel guidance
+			guidancePreset = null;
+			guidancePresetIndex = -1;
+			client.setCameraSpeed(1f);
+			panel.setGuidancePreset(-1);
+			panel.setLocked(false);
+			return;
+		}
+
 		locked = !locked;
 		if (!locked)
 		{
@@ -169,24 +226,24 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 		panel.setActivePreset(activePresetIndex);
 	}
 
-	void applyPreset(CameraPreset preset)
+	void startGuidance(CameraPreset preset)
 	{
 		List<CameraPreset> presets = loadPresets();
-		activePresetIndex = presets.indexOf(preset);
+		int index = presets.indexOf(preset);
 
-		clientThread.invokeLater(() ->
-		{
-			client.setCameraYawTarget(preset.getYaw());
-			client.setCameraPitchTarget(preset.getPitch());
-			client.runScript(ScriptID.CAMERA_DO_ZOOM, preset.getZoom(), preset.getZoom());
-		});
+		// Unlock the camera so the user can move it
+		locked = false;
+		middleMouseDown = false;
 
-		if (!locked)
-		{
-			locked = true;
-			panel.setLocked(true);
-		}
-		panel.setActivePreset(activePresetIndex);
+		guidancePreset = preset;
+		guidancePresetIndex = index;
+		activePresetIndex = -1;
+
+		client.setCameraSpeed(0.1f);
+
+		panel.setLocked(false);
+		panel.setActivePreset(-1);
+		panel.setGuidancePreset(index);
 	}
 
 	void deletePreset(int index)
@@ -199,6 +256,16 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 		presets.remove(index);
 		storePresets(presets);
 
+		if (guidancePresetIndex == index)
+		{
+			guidancePreset = null;
+			guidancePresetIndex = -1;
+		}
+		else if (guidancePresetIndex > index)
+		{
+			guidancePresetIndex--;
+		}
+
 		if (activePresetIndex == index)
 		{
 			activePresetIndex = -1;
@@ -209,6 +276,7 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 		}
 
 		panel.refreshPresets(presets);
+		panel.setGuidancePreset(guidancePresetIndex);
 		panel.setActivePreset(activePresetIndex);
 	}
 
@@ -243,12 +311,10 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 		Graphics2D g = img.createGraphics();
 		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-		// RuneLite orange body
 		g.setColor(new Color(255, 152, 31));
 		g.fillRoundRect(1, 4, 12, 9, 2, 2);
 		g.fillRoundRect(5, 2, 4, 3, 1, 1);
 
-		// Lens
 		g.setColor(new Color(18, 18, 24));
 		g.fillOval(4, 5, 7, 7);
 		g.setColor(new Color(80, 44, 6));
@@ -256,7 +322,6 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 		g.setColor(new Color(255, 230, 180, 150));
 		g.fillOval(6, 7, 2, 2);
 
-		// Shutter button (darker orange)
 		g.setColor(new Color(180, 90, 10));
 		g.fillOval(11, 4, 3, 3);
 
@@ -267,17 +332,12 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 	// region KeyListener
 
 	@Override
-	public void keyTyped(KeyEvent e)
-	{
-	}
+	public void keyTyped(KeyEvent e) {}
 
 	@Override
 	public void keyPressed(KeyEvent e)
 	{
-		if (!locked || !config.lockArrowKeys())
-		{
-			return;
-		}
+		if (!locked || !config.lockArrowKeys()) return;
 		int code = e.getKeyCode();
 		if (code == KeyEvent.VK_UP || code == KeyEvent.VK_DOWN
 			|| code == KeyEvent.VK_LEFT || code == KeyEvent.VK_RIGHT)
@@ -289,10 +349,7 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 	@Override
 	public void keyReleased(KeyEvent e)
 	{
-		if (!locked || !config.lockArrowKeys())
-		{
-			return;
-		}
+		if (!locked || !config.lockArrowKeys()) return;
 		int code = e.getKeyCode();
 		if (code == KeyEvent.VK_UP || code == KeyEvent.VK_DOWN
 			|| code == KeyEvent.VK_LEFT || code == KeyEvent.VK_RIGHT)
@@ -308,10 +365,7 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 	@Override
 	public MouseEvent mousePressed(MouseEvent mouseEvent)
 	{
-		if (!locked || !config.lockMiddleMouse())
-		{
-			return mouseEvent;
-		}
+		if (!locked || !config.lockMiddleMouse()) return mouseEvent;
 		if (SwingUtilities.isMiddleMouseButton(mouseEvent))
 		{
 			middleMouseDown = true;
@@ -326,10 +380,7 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 		if (SwingUtilities.isMiddleMouseButton(mouseEvent) && middleMouseDown)
 		{
 			middleMouseDown = false;
-			if (locked && config.lockMiddleMouse())
-			{
-				mouseEvent.consume();
-			}
+			if (locked && config.lockMiddleMouse()) mouseEvent.consume();
 		}
 		return mouseEvent;
 	}
@@ -337,36 +388,14 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 	@Override
 	public MouseEvent mouseDragged(MouseEvent mouseEvent)
 	{
-		if (locked && config.lockMiddleMouse() && middleMouseDown)
-		{
-			mouseEvent.consume();
-		}
+		if (locked && config.lockMiddleMouse() && middleMouseDown) mouseEvent.consume();
 		return mouseEvent;
 	}
 
-	@Override
-	public MouseEvent mouseClicked(MouseEvent mouseEvent)
-	{
-		return mouseEvent;
-	}
-
-	@Override
-	public MouseEvent mouseEntered(MouseEvent mouseEvent)
-	{
-		return mouseEvent;
-	}
-
-	@Override
-	public MouseEvent mouseExited(MouseEvent mouseEvent)
-	{
-		return mouseEvent;
-	}
-
-	@Override
-	public MouseEvent mouseMoved(MouseEvent mouseEvent)
-	{
-		return mouseEvent;
-	}
+	@Override public MouseEvent mouseClicked(MouseEvent e) { return e; }
+	@Override public MouseEvent mouseEntered(MouseEvent e) { return e; }
+	@Override public MouseEvent mouseExited(MouseEvent e) { return e; }
+	@Override public MouseEvent mouseMoved(MouseEvent e) { return e; }
 
 	// endregion
 
@@ -375,10 +404,7 @@ public class CameraLockPlugin extends Plugin implements KeyListener, MouseListen
 	@Override
 	public MouseWheelEvent mouseWheelMoved(MouseWheelEvent mouseWheelEvent)
 	{
-		if (locked && config.lockScroll())
-		{
-			mouseWheelEvent.consume();
-		}
+		if (locked && config.lockScroll()) mouseWheelEvent.consume();
 		return mouseWheelEvent;
 	}
 

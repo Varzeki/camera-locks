@@ -27,14 +27,19 @@ public class CameraLockPanel extends PluginPanel
 	private static final Color LOCKED_COLOR = new Color(220, 50, 50);
 	private static final Color UNLOCKED_COLOR = new Color(80, 200, 80);
 	private static final Color ACTIVE_BORDER_COLOR = new Color(80, 200, 80);
+	private static final Color GUIDANCE_BORDER_COLOR = new Color(255, 152, 31);
 
-	// Both borders must have identical total insets to prevent row resizing
+	// All three borders must have identical total insets to prevent row resizing on state changes
 	private static final Border INACTIVE_ROW_BORDER = BorderFactory.createCompoundBorder(
 		BorderFactory.createLineBorder(ColorScheme.MEDIUM_GRAY_COLOR, 1),
 		new EmptyBorder(3, 5, 3, 5)
 	);
 	private static final Border ACTIVE_ROW_BORDER = BorderFactory.createCompoundBorder(
 		BorderFactory.createLineBorder(ACTIVE_BORDER_COLOR, 1),
+		new EmptyBorder(3, 5, 3, 5)
+	);
+	private static final Border GUIDANCE_ROW_BORDER = BorderFactory.createCompoundBorder(
+		BorderFactory.createLineBorder(GUIDANCE_BORDER_COLOR, 1),
 		new EmptyBorder(3, 5, 3, 5)
 	);
 
@@ -46,6 +51,7 @@ public class CameraLockPanel extends PluginPanel
 
 	private final List<JPanel> presetRows = new ArrayList<>();
 	private final List<JButton> lockButtons = new ArrayList<>();
+	private int guidanceIndex = -1;
 
 	CameraLockPanel(CameraLockPlugin plugin)
 	{
@@ -70,8 +76,7 @@ public class CameraLockPanel extends PluginPanel
 		headerRow.add(statusLabel, BorderLayout.EAST);
 		headerRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, headerRow.getPreferredSize().height));
 
-		// ── Toggle button (centered, stable width) ───────────────────────────
-		// Pre-size to "Unlock Camera" width so text swap doesn't cause reflow
+		// ── Toggle button (stable width so text swap does not cause reflow) ─
 		toggleButton = new JButton("Lock Camera");
 		toggleButton.setPreferredSize(new Dimension(140, 28));
 		toggleButton.setMaximumSize(new Dimension(140, 28));
@@ -97,7 +102,7 @@ public class CameraLockPanel extends PluginPanel
 		addButton.setMinimumSize(new Dimension(30, 26));
 		addButton.setMaximumSize(new Dimension(30, 26));
 		addButton.setFont(addButton.getFont().deriveFont(Font.BOLD, 14f));
-		addButton.setToolTipText("Save position");
+		addButton.setToolTipText("Save current camera position");
 		addButton.addActionListener(e ->
 		{
 			String name = nameField.getText().trim();
@@ -135,7 +140,6 @@ public class CameraLockPanel extends PluginPanel
 		add(presetListPanel);
 	}
 
-	/** Full-width BorderLayout row panel with the shared background. */
 	private JPanel row()
 	{
 		JPanel p = new JPanel(new BorderLayout(4, 0));
@@ -144,7 +148,6 @@ public class CameraLockPanel extends PluginPanel
 		return p;
 	}
 
-	/** Left-aligned section label with a fixed height. */
 	private JLabel sectionLabel(String text)
 	{
 		JLabel label = new JLabel(text);
@@ -165,10 +168,45 @@ public class CameraLockPanel extends PluginPanel
 		});
 	}
 
+	/**
+	 * Highlight a preset row as "aligning" (orange border, disabled button showing "···").
+	 * Pass -1 to clear all guidance highlighting.
+	 */
+	void setGuidancePreset(int index)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			// Clear previous guidance row
+			if (guidanceIndex >= 0 && guidanceIndex < presetRows.size())
+			{
+				presetRows.get(guidanceIndex).setBorder(INACTIVE_ROW_BORDER);
+				lockButtons.get(guidanceIndex).setText("LOCK");
+				lockButtons.get(guidanceIndex).setEnabled(true);
+			}
+
+			guidanceIndex = index;
+
+			if (index >= 0 && index < presetRows.size())
+			{
+				presetRows.get(index).setBorder(GUIDANCE_ROW_BORDER);
+				lockButtons.get(index).setText("···");
+				lockButtons.get(index).setEnabled(false);
+				statusLabel.setText("ALIGNING");
+				statusLabel.setForeground(GUIDANCE_BORDER_COLOR);
+				toggleButton.setText("Cancel");
+			}
+		});
+	}
+
+	/**
+	 * Mark a preset row as locked (green border, "LOCKED" button).
+	 * Clears any guidance styling. Pass -1 to clear all active highlighting.
+	 */
 	void setActivePreset(int index)
 	{
 		SwingUtilities.invokeLater(() ->
 		{
+			guidanceIndex = -1;
 			for (int i = 0; i < presetRows.size(); i++)
 			{
 				boolean active = (i == index);
@@ -190,6 +228,7 @@ public class CameraLockPanel extends PluginPanel
 			presetListPanel.removeAll();
 			presetRows.clear();
 			lockButtons.clear();
+			guidanceIndex = -1;
 
 			if (presets.isEmpty())
 			{
@@ -200,9 +239,9 @@ public class CameraLockPanel extends PluginPanel
 			{
 				for (int i = 0; i < presets.size(); i++)
 				{
-					JPanel row = buildPresetRow(presets.get(i), i);
-					presetRows.add(row);
-					presetListPanel.add(row);
+					JPanel rowPanel = buildPresetRow(presets.get(i), i);
+					presetRows.add(rowPanel);
+					presetListPanel.add(rowPanel);
 					if (i < presets.size() - 1)
 					{
 						presetListPanel.add(Box.createVerticalStrut(3));
@@ -217,15 +256,14 @@ public class CameraLockPanel extends PluginPanel
 
 	private JPanel buildPresetRow(CameraPreset preset, int index)
 	{
-		JPanel row = row();
-		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		row.setBorder(INACTIVE_ROW_BORDER);
+		JPanel rowPanel = row();
+		rowPanel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		rowPanel.setBorder(INACTIVE_ROW_BORDER);
 
-		// Fix the row height so button clicks and border changes don't resize it
 		int rowH = 28;
-		row.setPreferredSize(new Dimension(0, rowH));
-		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, rowH));
-		row.setMinimumSize(new Dimension(0, rowH));
+		rowPanel.setPreferredSize(new Dimension(0, rowH));
+		rowPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, rowH));
+		rowPanel.setMinimumSize(new Dimension(0, rowH));
 
 		JLabel nameLabel = new JLabel(preset.getName());
 		nameLabel.setForeground(Color.WHITE);
@@ -236,8 +274,8 @@ public class CameraLockPanel extends PluginPanel
 		lockButton.setMinimumSize(new Dimension(68, 20));
 		lockButton.setMaximumSize(new Dimension(68, 20));
 		lockButton.setFont(lockButton.getFont().deriveFont(Font.BOLD, 10f));
-		lockButton.setToolTipText("Apply and lock to this position");
-		lockButton.addActionListener(e -> plugin.applyPreset(preset));
+		lockButton.setToolTipText("Guide camera to this position and lock");
+		lockButton.addActionListener(e -> plugin.startGuidance(preset));
 		lockButtons.add(lockButton);
 
 		JButton deleteButton = new JButton("✕");
@@ -253,8 +291,8 @@ public class CameraLockPanel extends PluginPanel
 		buttons.add(lockButton);
 		buttons.add(deleteButton);
 
-		row.add(nameLabel, BorderLayout.CENTER);
-		row.add(buttons, BorderLayout.EAST);
-		return row;
+		rowPanel.add(nameLabel, BorderLayout.CENTER);
+		rowPanel.add(buttons, BorderLayout.EAST);
+		return rowPanel;
 	}
 }
