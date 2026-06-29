@@ -38,8 +38,7 @@ import net.runelite.client.util.HotkeyListener;
 @PluginDescriptor(
 	name = "Camera Locks",
 	description = "Lock the camera and save/restore camera position presets",
-	tags = {"camera", "lock", "zoom", "pan", "preset"},
-	enabledByDefault = false
+	tags = {"camera", "lock", "zoom", "pan", "preset"}
 )
 public class CameraLockPlugin extends Plugin implements KeyListener, MouseListener, MouseWheelListener
 {
